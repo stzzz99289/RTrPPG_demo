@@ -1,5 +1,6 @@
 import numpy as np
 from scipy import signal
+from scipy.signal import welch
 from scipy.fftpack import fft, ifft
 
 
@@ -68,7 +69,8 @@ def joint_diag(A, jthresh):
                 Ip = list(range(p, nm, m))
                 Iq = list(range(q, nm, m))
                 g = [D[p, Ip] - D[q, Iq], D[p, Iq], D[q, Ip]]
-                D1, vcp = np.linalg.eig(np.dot(np.dot(B, np.dot(g, np.transpose(g))), Bt).real)
+                D1, vcp = np.linalg.eig(
+                    np.dot(np.dot(B, np.dot(g, np.transpose(g))), Bt).real)
                 la = np.sort(D1)
                 K = 0
                 for i in range(len(D1)):
@@ -180,6 +182,7 @@ def process_raw(raw_ppg, timestamp):
 
 
 def process_raw_debug(raw_ppg, timestamp):
+
     raw_ppg = np.array(raw_ppg)
     test_len = raw_ppg.shape[0]
 
@@ -216,3 +219,70 @@ def process_raw_debug(raw_ppg, timestamp):
     test_bpm2 = calBPMbyfft(test_inter2, fps)
 
     return [test_hr0, test_hr1, test_hr2], [test_bpm0, test_bpm1, test_bpm2], test_kurt
+
+
+def Welch(bvps, fps, minHz=0.65, maxHz=4.0, nfft=2048):
+    """
+    This function computes Welch'method for spectral density estimation.
+
+    Args:
+        bvps(flaot32 numpy.ndarray): BVP signal as float32 Numpy.ndarray with shape [num_estimators, num_frames].
+        fps (float): frames per seconds.
+        minHz (float): frequency in Hz used to isolate a specific subband [minHz, maxHz] (esclusive).
+        maxHz (float): frequency in Hz used to isolate a specific subband [minHz, maxHz] (esclusive).
+        nfft (int): number of DFT points, specified as a positive integer.
+    Returns:
+        Sample frequencies as float32 numpy.ndarray, and Power spectral density or power spectrum as float32 numpy.ndarray.
+    """
+    _, n = bvps.shape
+    if n < 256:
+        seglength = n
+        overlap = int(0.8*n)  # fixed overlapping
+    else:
+        seglength = 256
+        overlap = 200
+    # -- periodogram by Welch
+    F, P = welch(bvps, nperseg=seglength, noverlap=overlap, fs=fps, nfft=nfft)
+    F = F.astype(np.float32)
+    P = P.astype(np.float32)
+    # -- freq subband (0.65 Hz - 4.0 Hz)
+    band = np.argwhere((F > minHz) & (F < maxHz)).flatten()
+    Pfreqs = 60*F[band]
+    Power = P[:, band]
+    return Pfreqs, Power
+
+
+def process_raw_chrom(raw_ppg, timestamp):
+    raw_ppg = np.array(raw_ppg)
+    test_len = raw_ppg.shape[0]
+    fps = float(test_len) / (timestamp[-1] - timestamp[0])
+    even_times = np.linspace(timestamp[0], timestamp[-1], test_len)
+
+    # pre-filtering
+    test_norm = preProcess(raw_ppg, fps)
+    test_norm = np.transpose(test_norm)
+
+    # CHROM method implementation from pyVHR
+    X = np.expand_dims(test_norm, axis=0)
+    Xcomp = 3 * X[:, 0] - 2 * X[:, 1]
+    Ycomp = (1.5 * X[:, 0]) + X[:, 1] - (1.5 * X[:, 2])
+    sX = np.std(Xcomp, axis=1)
+    sY = np.std(Ycomp, axis=1)
+    alpha = (sX / sY).reshape(-1, 1)
+    alpha = np.repeat(alpha, Xcomp.shape[1], 1)
+    rppg = Xcomp - np.multiply(alpha, Ycomp)
+
+    # post-filtering
+    rppg = rppg[0]
+    test_inter = np.interp(even_times, timestamp, rppg)
+    test_hr = smooths(test_inter, 5)
+    test_hr = test_hr - np.mean(test_hr)
+    # post_rppg = np.expand_dims(np.hamming(test_len) * test_hr, axis=0)
+    post_rppg = np.expand_dims(test_hr, axis=0)
+
+    # hr calculation implementation from pyVHR
+    Pfreqs, Power = Welch(post_rppg, fps)
+    Pmax = np.argmax(Power, axis=1)  # power max
+    bpm = Pfreqs[Pmax.squeeze()]
+
+    return post_rppg[0], bpm

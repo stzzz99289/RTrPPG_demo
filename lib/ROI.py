@@ -22,6 +22,15 @@ face_oval_idx = np.asarray(
      176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103])
 
 
+def get_raw_signals(ROI_image, mask):
+    mask_single = mask[:, :, 0]
+    raw0 = np.sum(ROI_image[:, :, 0]) / (np.sum(mask_single) / 255)
+    raw1 = np.sum(ROI_image[:, :, 1]) / (np.sum(mask_single) / 255)
+    raw2 = np.sum(ROI_image[:, :, 2]) / (np.sum(mask_single) / 255)
+    raw = [raw0, raw1, raw2]
+
+    return raw
+
 def get_ROI(image):
     with mp_face_mesh.FaceMesh(
             max_num_faces=1,
@@ -87,7 +96,8 @@ def get_ROI(image):
 
                 # mask is all 255 in ROI, all 0 otherwise
                 masked_image = cv2.bitwise_and(image, mask)
-                return masked_image, mask
+                return masked_image, masked_image, mask
+            
             elif ROI_type == 'shadow':
                 ignore_mask_color = (255,) * channel_count
                 mask = np.zeros(image.shape, dtype=np.uint8)
@@ -105,11 +115,13 @@ def get_ROI(image):
                 cv2.fillConvexPoly(shadow_mask, roi_corners_reye, ignore_mask_color)
                 cv2.fillConvexPoly(shadow_mask, roi_corners_lip, ignore_mask_color)
 
-                masked_image_holistic = cv2.bitwise_and(image, shadow_mask)
-                masked_image = cv2.addWeighted(image, 0.6, masked_image_holistic, 0.4, 0)
-                return masked_image, mask
+                # mask is all 255 in ROI, all 0 otherwise
+                masked_image_holistic = masked_image = cv2.bitwise_and(image, mask)
+                # transparent masked image used for display
+                masked_image_display = cv2.addWeighted(image, 0.6, cv2.bitwise_and(image, shadow_mask), 0.4, 0)
+                return masked_image_display, masked_image_holistic, mask
 
         else:
             mask = np.zeros(image.shape, dtype=np.uint8)
             mask.fill(255)
-            return cv2.cvtColor(image, cv2.COLOR_RGB2BGR), mask
+            return cv2.cvtColor(image, cv2.COLOR_RGB2BGR), cv2.cvtColor(image, cv2.COLOR_RGB2BGR), mask
