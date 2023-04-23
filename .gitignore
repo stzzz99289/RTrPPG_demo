@@ -134,6 +134,7 @@ videos/*
 
 # jupyter notebook file for test development
 *.ipynb
+*.npy
 
 # idea files
 .idea/*
