@@ -5,7 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from lib.ROI import get_ROI, get_raw_signals
-from lib.signal_process import process_raw, process_raw_debug, process_raw_chrom
+from lib.signal_process import process_raw_chrom, calculate_rmssd
+from lib.visualization import putBottomtext, putCentertext, plt2cv
 
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel
@@ -18,38 +19,10 @@ simplefilter("ignore", category=ConvergenceWarning)
 filterwarnings('ignore')
 
 
-def putCentertext(image, text):
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    textsize = cv2.getTextSize(text, font, 1, 2)[0]
-    textX = int((image.shape[1] - textsize[0]) / 2)
-    textY = int((image.shape[0] + textsize[1]) / 2)
-    scale = 1
-    thickness = 2
-    cv2.putText(image, text, (textX, textY), font, scale, (0, 0, 255), thickness)
-    return image
-
-
-def putBottomtext(image, text):
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    textX = 0
-    textY = image.shape[0]
-    scale = 1
-    thickness = 2
-    cv2.putText(image, text, (textX, textY), font, scale, (0, 0, 255), thickness)
-    return image
-
-
-def plt2cv(fig):
-    fig.canvas.draw()
-    img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    return img
-
-
 class getHRV:
 
     def __init__(self, input_file=None, output_file='out.avi'):
+        # camera params
         self.cam_index = 0
         self.offline = False
         self.input_fps = 24
@@ -68,26 +41,31 @@ class getHRV:
 
         # each [update_time] seconds, calculate a new hr value
         # each new hr value will be calculated based on info in previous [interval_time] seconds 
-        self.update_time = 2  
-        self.interval_scale = 5  
+        self.update_time = 1
+        self.interval_scale = 8
         self.interval_time = self.interval_scale * self.update_time  
         self.start_time = time.time()
 
-        # lists used to stores all info and info in a buffer
+        # lists used to stores history information and buffer information
         self.ROI_values_all = []
         self.ROI_values_buffer = []
         self.raw_times_all = []
         self.raw_times_buffer = []
 
+        # lists used to update ppg buffer
         self.update_index = [0]  # index in ROI_values_all
         self.update_count = 1
         self.buffer_start = 0  # buffer start time
         self.buffer_end = self.interval_scale  # buffer end time
 
+        # lists used to save bpms, rmssds, and adjusted (by outlier detection )bpms
         self.bpms = []
+        self.rmssds = []
         self.adjusted_bpms = []
         self.bpm_times = []
 
+        # calculating: start calculating ppg signal
+        # recording: start recording history hr&hrv data
         self.calculating = False
         self.recording = False
 
@@ -99,9 +77,10 @@ class getHRV:
         self.rPPG_image = self.init_image
         self.bpm_image = self.init_image
 
-        self.debug = False
-        self.od = True
+        # turn on outlier detection or not
+        self.od = False
 
+        # params for output to video file
         self.frame_count = 0
         self.out = cv2.VideoWriter(output_file, cv2.VideoWriter_fourcc(*'MJPG'), self.input_fps, (self.width,self.height))
     
@@ -116,30 +95,42 @@ class getHRV:
         ax3.set_title("bpm:{:.0f}, kurt:{:.2f}".format(bpms[2], kurt[2]))
         lines = [line0, line1, line2]
         lines[target_index].set_color("red")
-        self.rPPG_image = plt2cv(rPPG_fig)
+        self.rPPG_image = plt2cv(rPPG_fig, (int(self.width/2), int(self.height/2)))
         self.rPPG_image = putBottomtext(self.rPPG_image, "Time: {}s".format(int(current_time)))
 
-    def set_rPPG_image(self, buffer_size, rppg, current_time):
-        rPPG_fig = plt.figure()
+    def set_rPPG_image(self, buffer_size, rppg, rppg_ssf, peak_indices, ibi, current_time):
+        rPPG_fig = plt.figure(figsize=(16, 9))
         even_times = np.linspace(self.buffer_start, self.buffer_end, buffer_size)
-        plt.plot(even_times, rppg)
+        peak_times = even_times[peak_indices]
+
+        # plot signals and peaks
+        plt.plot(even_times, rppg, label='rPPG signal')
+        plt.plot(even_times, rppg_ssf, label='rPPG signal after slope sum')
+        plt.scatter(peak_times, rppg_ssf[peak_indices], c='red', marker='x')
+
+        # plot inter-beat interval values
+        for i in range(len(ibi)):
+            si, ei = peak_times[i], peak_times[i+1]
+            plt.plot([si, ei], [1.2, 1.2], '-o', c='red')
+            plt.text(0.5*(si+ei), 1.2, '{}ms'.format(ibi[i]), horizontalalignment='center')
+
         plt.title("rPPG signal, buffer size: {}".format(buffer_size))
         plt.xlabel("time")
         plt.ylim([-2.0, 2.0])
-        self.rPPG_image = plt2cv(rPPG_fig)
+        self.rPPG_image = plt2cv(rPPG_fig, (int(self.width/2), int(self.height/2)))
         self.rPPG_image = putBottomtext(self.rPPG_image, "Time: {}s".format(int(current_time)))
 
-    def set_hr_image(self, bpm):
-        bpm_fig = plt.figure()
+    def set_hr_image(self, bpm, rmssd):
+        bpm_fig = plt.figure(figsize=(16, 9))
         plt.plot(self.bpm_times, self.bpms, '--ro')
         plt.title("Heart Rate")
         plt.xlabel("time")
         plt.ylim([50, 120])
-        self.bpm_image = plt2cv(bpm_fig)
-        self.bpm_image = putBottomtext(self.bpm_image, "Heart rate in {}s interval: {}"
-                                        .format(self.interval_time, int(bpm)))
+        self.bpm_image = plt2cv(bpm_fig, (int(self.width/2), int(self.height/2)))
+        self.bpm_image = putBottomtext(self.bpm_image, "HR: {}, HRV: {}ms"
+                                        .format(int(bpm), int(rmssd)))
 
-    def set_hr_image_od(self, bpm):
+    def set_hr_image_od(self, bpm, rmssd):
         timesES = self.bpm_times
         bpmES = self.bpms
         timesES = np.array(timesES).reshape(-1, 1)
@@ -181,7 +172,7 @@ class getHRV:
                 prev_bpm = bpmES[index]
         adjusted_bpmES = scaler.inverse_transform(adjusted_bpmES_scaled)
         mean_prediction_origin = scaler.inverse_transform(mean_prediction.reshape(-1,1)).reshape(-1)
-        bpm_fig = plt.figure()
+        bpm_fig = plt.figure(figsize=(16, 9))
         plt.plot(timesES, bpmES, label="Estimations", marker='o', color='blue', alpha=0.5)
         plt.plot(timesES, adjusted_bpmES, label="Adjusted Estimations", marker='o', color='green', alpha=0.5)
         plt.plot(timesES, mean_prediction_origin, label="Mean prediction")
@@ -198,9 +189,9 @@ class getHRV:
         plt.ylim([50, 120])
         _ = plt.title(r"$l={:.2f}, \sigma_f={:.2f}, \sigma_n={:.2f}$".format(length, sigma_f, sigma_n))
         self.adjusted_bpms = adjusted_bpmES
-        self.bpm_image = plt2cv(bpm_fig)
-        self.bpm_image = putBottomtext(self.bpm_image, "Heart rate in {}s interval: {}"
-                                        .format(self.interval_time, int(bpm)))
+        self.bpm_image = plt2cv(bpm_fig, (int(self.width/2), int(self.height/2)))
+        self.bpm_image = putBottomtext(self.bpm_image, "HR: {}, HRV: {}ms"
+                                        .format(int(bpm), int(rmssd)))
 
     def main_loop(self, prior_bpm):
         # read image from cap
@@ -239,39 +230,32 @@ class getHRV:
                 if self.update_count > self.interval_scale:
                     self.recording = True
 
+                    # set current raw signal buffer
                     start_index = self.update_index[self.buffer_start]
                     end_index = self.update_index[self.buffer_end]
                     self.ROI_values_buffer = np.array(self.ROI_values_all[start_index: end_index + 1])
                     self.raw_times_buffer = np.array(self.raw_times_all[start_index: end_index + 1])
-
                     self.buffer_start += 1
                     self.buffer_end += 1
                     buffer_size = len(self.ROI_values_buffer)
                     # print("buffer {}~{}, size:{}".format(start_index, end_index, buffer_size))
 
-                    if self.debug:
-                        rppgs, bpms, kurt = process_raw_debug(self.ROI_values_buffer, self.raw_times_buffer)
-                        target_index = np.argmax(kurt)
-                        bpm = bpms[target_index]
-                    else:
-                        # rppg, bpm = process_raw(self.ROI_values_buffer, self.raw_times_buffer)
-                        rppg, bpm = process_raw_chrom(self.ROI_values_buffer, self.raw_times_buffer)
+                    # calculate bpm, rmssd and corresponding times
+                    rppg, rppg_ssf, peak_indices, ibi, bpm = process_raw_chrom(self.ROI_values_buffer, self.raw_times_buffer)
+                    rmssd = calculate_rmssd(ibi)
                     if prior_bpm:
                         alpha = 0.6
-                        bpm = bpm*alpha + prior_bpm*(1-alpha) + 10
-
+                        bpm = bpm*alpha + prior_bpm*(1-alpha) + 10  
                     self.bpms.append(bpm)
+                    self.rmssds.append(rmssd)
                     self.bpm_times.append(current_time)
 
-                    if self.debug:
-                        self.set_rPPG_image_debug(buffer_size, rppgs, bpms, kurt, target_index, current_time)
-                    else:
-                        self.set_rPPG_image(buffer_size, rppg, current_time)
-
+                    # set rPPG signal image and history HR image
+                    self.set_rPPG_image(buffer_size, rppg, rppg_ssf, peak_indices, ibi, current_time)
                     if self.od == False:
-                        self.set_hr_image(bpm)
+                        self.set_hr_image(bpm, rmssd)
                     else:
-                        self.set_hr_image_od(bpm)
+                        self.set_hr_image_od(bpm, rmssd)
 
                 # print("info updated at time:{}".format(current_time))
                 self.update_count += 1
@@ -287,7 +271,7 @@ class getHRV:
 
 if __name__ == "__main__":
     if sys.argv[1] == 'offline':
-        hrv = getHRV(input_file='test_input.mp4', output_file='out.avi')
+        hrv = getHRV(input_file='./videos/test_input.mov', output_file='./videos/out.avi')
     elif sys.argv[1] == 'online':
         hrv = getHRV()
     else:
@@ -329,5 +313,5 @@ if __name__ == "__main__":
     cv2.destroyAllWindows()
 
     # you can obtain the results you want in hrv object
-    print(hrv.bpms)
-    print(hrv.adjusted_bpms)
+    # print(hrv.bpms)
+    print(hrv.rmssds)

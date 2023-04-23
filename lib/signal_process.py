@@ -2,6 +2,7 @@ import numpy as np
 from scipy import signal
 from scipy.signal import welch
 from scipy.fftpack import fft, ifft
+from scipy.signal import find_peaks
 
 
 def normlize(a):
@@ -252,6 +253,55 @@ def Welch(bvps, fps, minHz=0.65, maxHz=4.0, nfft=2048):
     return Pfreqs, Power
 
 
+def slop_sum_function(rppg, wsize=3, ssize=10):
+    '''
+    implementation of ssf method
+    ref: https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=8868712&tag=1
+    '''
+    # initialize ssf
+    rppg_ssf = np.zeros_like(rppg)
+
+    # ssf calculation
+    rppg_diff = np.insert(np.diff(rppg), 0, 0)
+    rppg_diff = np.maximum(rppg_diff, 0)
+    rppg_ssf = np.convolve(rppg_diff, np.ones(wsize,dtype=int), 'same')
+
+    # smooth ssf curve
+    rppg_ssf = np.convolve(rppg_ssf, np.ones(ssize,dtype=int), 'same') / ssize
+
+    # normalize ssf curve
+    rppg_ssf = rppg_ssf / np.max(rppg_ssf)
+
+    return rppg_ssf
+
+
+def find_peak_indices(rppg, fps, min_height=0.5):
+    '''
+    return peak indices given rppg signals
+    assuming max hr=240bpm (4 beats per second), so minimum peak distance is fps/4
+    '''
+    peak_indices = find_peaks(rppg, height=min_height, distance=fps/(240/60))
+
+    return peak_indices[0]
+
+
+def calculate_ibi(peak_indices, fps):
+    '''
+    calculate inter-beat intervals given peak indices (frame index) and fps
+    unit: ms
+    '''
+    frames_ibi = np.diff(peak_indices)
+    ms_ibi = frames_ibi / fps * 1000
+
+    return ms_ibi.astype(int)
+
+
+def calculate_rmssd(ms_ibi):
+    ibi_diff = np.diff(ms_ibi)
+    
+    return np.sqrt(np.sum(ibi_diff ** 2) / len(ibi_diff))
+
+
 def process_raw_chrom(raw_ppg, timestamp):
     raw_ppg = np.array(raw_ppg)
     test_len = raw_ppg.shape[0]
@@ -280,9 +330,18 @@ def process_raw_chrom(raw_ppg, timestamp):
     # post_rppg = np.expand_dims(np.hamming(test_len) * test_hr, axis=0)
     post_rppg = np.expand_dims(test_hr, axis=0)
 
+    # SSF for more clear peaks
+    rppg_ssf = slop_sum_function(post_rppg[0], wsize=3, ssize=5)
+
+    # peak detection
+    peak_indices = find_peak_indices(rppg_ssf, fps, min_height=0.5)
+
+    # calculate inter-beat interval
+    ibi = calculate_ibi(peak_indices, fps)
+
     # hr calculation implementation from pyVHR
     Pfreqs, Power = Welch(post_rppg, fps)
     Pmax = np.argmax(Power, axis=1)  # power max
     bpm = Pfreqs[Pmax.squeeze()]
 
-    return post_rppg[0], bpm
+    return post_rppg[0], rppg_ssf, peak_indices, ibi, bpm

@@ -127,5 +127,13 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# videos
 *.avi
 *.mp4
+videos/*
+
+# jupyter notebook file for test development
+*.ipynb
+
+# idea files
+.idea/*
