@@ -1,8 +1,8 @@
 import numpy as np
 from scipy import signal
 from scipy.signal import welch
-from scipy.fftpack import fft, ifft
 from scipy.signal import find_peaks
+from scipy.fftpack import fft, ifft
 
 
 def normlize(a):
@@ -297,23 +297,29 @@ def calculate_ibi(peak_indices, fps):
 
 
 def calculate_rmssd(ms_ibi):
+    '''
+    calculate RMSSD metric of HRV given inter-beat intervals
+    '''
     ibi_diff = np.diff(ms_ibi)
     
     return np.sqrt(np.sum(ibi_diff ** 2) / len(ibi_diff))
 
 
-def process_raw_chrom(raw_ppg, timestamp):
-    raw_ppg = np.array(raw_ppg)
-    test_len = raw_ppg.shape[0]
-    fps = float(test_len) / (timestamp[-1] - timestamp[0])
-    even_times = np.linspace(timestamp[0], timestamp[-1], test_len)
+def process_raw_chrom(ppg_raw, timestamp):
+    # get length of ppg signal and fps
+    ppg_raw = np.array(ppg_raw)
+    len_ppg = ppg_raw.shape[0]
+    fps = float(len_ppg) / (timestamp[-1] - timestamp[0])
+
+    # generate even times of ppg signal
+    even_times = np.linspace(timestamp[0], timestamp[-1], len_ppg)
 
     # pre-filtering
-    test_norm = preProcess(raw_ppg, fps)
-    test_norm = np.transpose(test_norm)
+    ppg_prefilt = preProcess(ppg_raw, fps)
 
     # CHROM method implementation from pyVHR
-    X = np.expand_dims(test_norm, axis=0)
+    ppg_prefilt = np.transpose(ppg_prefilt)
+    X = np.expand_dims(ppg_prefilt, axis=0)
     Xcomp = 3 * X[:, 0] - 2 * X[:, 1]
     Ycomp = (1.5 * X[:, 0]) + X[:, 1] - (1.5 * X[:, 2])
     sX = np.std(Xcomp, axis=1)
@@ -321,17 +327,16 @@ def process_raw_chrom(raw_ppg, timestamp):
     alpha = (sX / sY).reshape(-1, 1)
     alpha = np.repeat(alpha, Xcomp.shape[1], 1)
     rppg = Xcomp - np.multiply(alpha, Ycomp)
+    rppg = rppg[0]
 
     # post-filtering
-    rppg = rppg[0]
-    test_inter = np.interp(even_times, timestamp, rppg)
-    test_hr = smooths(test_inter, 5)
-    test_hr = test_hr - np.mean(test_hr)
-    # post_rppg = np.expand_dims(np.hamming(test_len) * test_hr, axis=0)
-    post_rppg = np.expand_dims(test_hr, axis=0)
+    rppg = np.interp(even_times, timestamp, rppg)
+    rppg = smooths(rppg, 5)
+    rppg = rppg - np.mean(rppg)
+    rppg_postfilt = np.expand_dims(rppg, axis=0)
 
     # SSF for more clear peaks
-    rppg_ssf = slop_sum_function(post_rppg[0], wsize=3, ssize=5)
+    rppg_ssf = slop_sum_function(rppg_postfilt[0], wsize=3, ssize=5)
 
     # peak detection
     peak_indices = find_peak_indices(rppg_ssf, fps, min_height=0.5)
@@ -340,8 +345,8 @@ def process_raw_chrom(raw_ppg, timestamp):
     ibi = calculate_ibi(peak_indices, fps)
 
     # hr calculation implementation from pyVHR
-    Pfreqs, Power = Welch(post_rppg, fps)
+    Pfreqs, Power = Welch(rppg_postfilt, fps)
     Pmax = np.argmax(Power, axis=1)  # power max
     bpm = Pfreqs[Pmax.squeeze()]
 
-    return post_rppg[0], rppg_ssf, peak_indices, ibi, bpm
+    return rppg_postfilt[0], rppg_ssf, peak_indices, ibi, bpm

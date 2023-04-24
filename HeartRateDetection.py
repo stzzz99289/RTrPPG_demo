@@ -5,18 +5,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from lib.ROI import get_ROI, get_raw_signals
-from lib.signal_process import process_raw_chrom, calculate_rmssd
+from lib.filtering import process_raw_chrom, calculate_rmssd
 from lib.visualization import putBottomtext, putCentertext, plt2cv
-
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel
-from sklearn import preprocessing
-from warnings import simplefilter, filterwarnings
-from sklearn.exceptions import ConvergenceWarning
-
-# filter some warnings
-simplefilter("ignore", category=ConvergenceWarning)
-filterwarnings('ignore')
+from lib.outlier_detection import OD
 
 
 class getHRV:
@@ -58,7 +49,7 @@ class getHRV:
         self.buffer_start = 0  # buffer start time
         self.buffer_end = self.interval_scale  # buffer end time
 
-        # lists used to save bpms, rmssds, and adjusted (by outlier detection )bpms
+        # lists used to save bpms, rmssds, and adjusted (by outlier detection module) bpms
         self.bpms = []
         self.rmssds = []
         self.adjusted_bpms = []
@@ -78,7 +69,7 @@ class getHRV:
         self.bpm_image = self.init_image
 
         # turn on outlier detection or not
-        self.od = False
+        self.od = True
 
         # params for output to video file
         self.frame_count = 0
@@ -131,55 +122,22 @@ class getHRV:
                                         .format(int(bpm), int(rmssd)))
 
     def set_hr_image_od(self, bpm, rmssd):
-        timesES = self.bpm_times
-        bpmES = self.bpms
-        timesES = np.array(timesES).reshape(-1, 1)
-        bpmES = np.array(bpmES).reshape(-1, 1)
-        scaler = preprocessing.StandardScaler().fit(bpmES)
-        bpmES_scaled = scaler.transform(bpmES)
-        sigma_f = 1
-        length = 20
-        sigma_n = 0.1
-        sigma_f_bounds = tuple([i**2 for i in (0.1, 10)])
-        length_bounds = (10, 30)
-        sigma_n_bounds = tuple([i**2 for i in (0.075, 0.4)])
-        kernel = ConstantKernel(constant_value=sigma_f**2, constant_value_bounds=sigma_f_bounds) \
-                    * RBF(length_scale=length, length_scale_bounds=length_bounds) \
-                    + WhiteKernel(noise_level=sigma_n**2, noise_level_bounds=sigma_n_bounds)
-        gp = GaussianProcessRegressor(kernel=kernel, alpha=0.0, n_restarts_optimizer=50).fit(timesES, bpmES_scaled)
-        params = gp.kernel_.get_params(False)
-        sigma_f = params['k1'].k1.constant_value ** (0.5)
-        length = params['k1'].k2.length_scale
-        sigma_n = params['k2'].noise_level ** (0.5)
-        mean_prediction, std_prediction = gp.predict(timesES, return_std=True)
-        mean_prediction = mean_prediction.reshape(-1)
-        adjusted_bpmES_scaled = []
-        adjusted_bpmES = []
-        prev_bpm_scaled = bpmES_scaled[0]
-        prev_bpm = bpmES[0]
-        for index, bpm_scaled in enumerate(bpmES_scaled):
-            tmp_mean = mean_prediction[index]
-            tmp_std = std_prediction[index]
-            if abs(float(bpm_scaled) - tmp_mean) > 1.96 * tmp_std and index >= 2:
-                # outlier
-                adjusted_bpmES_scaled.append(prev_bpm_scaled)
-                adjusted_bpmES.append(prev_bpm)
-            else:
-                # not outlier
-                adjusted_bpmES_scaled.append(bpm_scaled)
-                adjusted_bpmES.append(bpmES[index])
-                prev_bpm_scaled = bpm_scaled
-                prev_bpm = bpmES[index]
-        adjusted_bpmES = scaler.inverse_transform(adjusted_bpmES_scaled)
-        mean_prediction_origin = scaler.inverse_transform(mean_prediction.reshape(-1,1)).reshape(-1)
+        timesES = np.array(self.bpm_times).reshape(-1, 1)
+        bpmES = np.array(self.bpms).reshape(-1, 1)
+        
+        # perform outlier detection
+        od_module = OD()
+        adjusted_bpmES, mean_prediction, std_prediction, hyper_params = od_module.gaussian_od(timesES, bpmES)
+
+        # plot bpm figure with outlier detection
         bpm_fig = plt.figure(figsize=(16, 9))
         plt.plot(timesES, bpmES, label="Estimations", marker='o', color='blue', alpha=0.5)
         plt.plot(timesES, adjusted_bpmES, label="Adjusted Estimations", marker='o', color='green', alpha=0.5)
-        plt.plot(timesES, mean_prediction_origin, label="Mean prediction")
+        plt.plot(timesES, mean_prediction, label="Mean prediction")
         plt.fill_between(
             timesES.ravel(),
-            mean_prediction_origin - 1.96 * std_prediction * scaler.scale_,
-            mean_prediction_origin + 1.96 * std_prediction * scaler.scale_,
+            mean_prediction - 1.96 * std_prediction,
+            mean_prediction + 1.96 * std_prediction,
             alpha=0.2,
             label=r"95% confidence interval",
         )
@@ -187,7 +145,7 @@ class getHRV:
         plt.xlabel("time")
         plt.ylabel("HR series")
         plt.ylim([50, 120])
-        _ = plt.title(r"$l={:.2f}, \sigma_f={:.2f}, \sigma_n={:.2f}$".format(length, sigma_f, sigma_n))
+        _ = plt.title(r"$l={:.2f}, \sigma_f={:.2f}, \sigma_n={:.2f}$".format(*hyper_params))
         self.adjusted_bpms = adjusted_bpmES
         self.bpm_image = plt2cv(bpm_fig, (int(self.width/2), int(self.height/2)))
         self.bpm_image = putBottomtext(self.bpm_image, "HR: {}, HRV: {}ms"

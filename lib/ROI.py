@@ -2,6 +2,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
+# define drawing params
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 mp_face_mesh = mp.solutions.face_mesh
@@ -10,10 +11,8 @@ mp_face_mesh = mp.solutions.face_mesh
 facemesh_typelst = ['FACEMESH_CONTOURS', 'FACEMESH_FACE_OVAL', 'FACEMESH_IRISES', 'FACEMESH_LEFT_EYE',
                     'FACEMESH_LEFT_EYEBROW', 'FACEMESH_LEFT_IRIS', 'FACEMESH_LIPS', 'FACEMESH_RIGHT_EYE',
                     'FACEMESH_RIGHT_EYEBROW', 'FACEMESH_RIGHT_IRIS', 'FACEMESH_TESSELATION']
-# print(mp_face_mesh.FACEMESH_FACE_OVAL)
 
-# index of points of the ROI polyline
-# note the order of the points
+# index of points of the ROI polyline, note the order of the points
 right_eye_idx = np.asarray([246, 161, 159, 158, 157, 173, 133, 153, 145, 144, 163, 7])
 left_eye_idx = np.asarray([398, 384, 385, 386, 387, 388, 263, 390, 373, 374, 380, 381, 382])
 lip_idx = np.asarray([61, 185, 40, 39, 37, 267, 269, 270, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146])
@@ -23,6 +22,9 @@ face_oval_idx = np.asarray(
 
 
 def get_raw_signals(ROI_image, mask):
+    '''
+    get raw signals (averaged over ROI), given ROI image and mask
+    '''
     mask_single = mask[:, :, 0]
     raw0 = np.sum(ROI_image[:, :, 0]) / (np.sum(mask_single) / 255)
     raw1 = np.sum(ROI_image[:, :, 1]) / (np.sum(mask_single) / 255)
@@ -31,24 +33,28 @@ def get_raw_signals(ROI_image, mask):
 
     return raw
 
-def get_ROI(image):
+def get_ROI(image, ROI_type="shadow"):
     with mp_face_mesh.FaceMesh(
             max_num_faces=1,
             refine_landmarks=True,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5) as face_mesh:
 
+        # get image params
         height, width = image.shape[:2]
         channel_count = image.shape[2]
 
+        # performe mediapipe face landmark detection
         image.flags.writeable = False
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         results = face_mesh.process(image)
 
         if results.multi_face_landmarks:
+            # face detected, get landmarks
             face_landmarks = results.multi_face_landmarks[0]
             landmarks_lst = face_landmarks.landmark  # landmark_lst[i] is a dict with information of landmark i
 
+            # transform image for processing
             image.flags.writeable = True
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
@@ -78,8 +84,7 @@ def get_ROI(image):
             roi_corners_reye = np.array([roi_corners_reye], dtype=np.int32)
             roi_corners_lip = np.array([roi_corners_lip], dtype=np.int32)
 
-            ROI_type = 'shadow'
-
+            # generate ROI masked image based on ROI type
             if ROI_type == 'holistic':
                 # keep the face ROI and remove the rest
                 # all 0 outside the polygon, all 255(0x11) inside the polygon
@@ -122,6 +127,7 @@ def get_ROI(image):
                 return masked_image_display, masked_image_holistic, mask
 
         else:
+            # face not detected, use the full image as ROI
             mask = np.zeros(image.shape, dtype=np.uint8)
             mask.fill(255)
             return cv2.cvtColor(image, cv2.COLOR_RGB2BGR), cv2.cvtColor(image, cv2.COLOR_RGB2BGR), mask
