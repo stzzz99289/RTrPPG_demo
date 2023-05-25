@@ -222,9 +222,9 @@ class RTrPPG:
                     # calculate vital signs
                     rppg_ssf = self.vs_module.slop_sum_function()
                     peak_indices = self.vs_module.find_peak_indices()
-                    ibi = self.vs_module.calculate_ibi()
-                    bpm = self.vs_module.calculate_HR()
-                    rmssd = self.vs_module.calculate_HRV()
+                    ibi = self.vs_module.calculate_ibi(normalize=False)
+                    bpm = self.vs_module.calculate_HR(hr_metric='spec')
+                    rmssd = self.vs_module.calculate_HRV(hrv_metric='rmssd')
 
                     if prior_bpm:
                         alpha = 0.6

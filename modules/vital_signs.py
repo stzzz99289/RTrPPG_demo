@@ -77,6 +77,7 @@ class VitalSigns:
         return peak indices given rppg signals
         assuming max hr=240bpm (4 beats per second), so minimum peak distance is fps/4
         '''
+        # TODO: fine-tune parameters or find some better methods
         # SSF for more clear peaks
         rppg_ssf = self.slop_sum_function()
 
