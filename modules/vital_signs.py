@@ -25,7 +25,7 @@ class VitalSigns:
         This function computes Welch's method for spectral density estimation.
         """
         # get length of rPPG signal
-        _, n = self.rppg.shape
+        n = len(self.rppg)
 
         # set segment length and overlapping length
         if n < 256:
@@ -126,7 +126,7 @@ class VitalSigns:
         
         elif hr_metric == "spec":
             # hr calculation based on freqency spectrom
-            Pfreqs, Power = self.calculate_freq_spec(self.rppg, self.fps)
+            Pfreqs, Power = self.calculate_freq_spec()
             Pmax = np.argmax(Power, axis=1)
             bpm = Pfreqs[Pmax.squeeze()]
             return bpm
