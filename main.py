@@ -4,16 +4,18 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-from lib.ROI import get_ROI, get_raw_signals
-from lib.filtering import process_raw_chrom, calculate_rmssd
-from lib.visualization import putBottomtext, putCentertext, plt2cv
-from lib.outlier_detection import OD
+from modules.ROI import get_ROI, get_raw_signals
+from modules.visualization import putBottomtext, putCentertext, plt2cv
+from modules.outlier_detection import OutlierDetection
+from modules.filtering import Filtering
+from modules.rppg import RPPG
+from modules.vital_signs import VitalSigns
 
 
-class getHRV:
+class RTrPPG:
 
     def __init__(self, input_file=None, output_file='out.avi'):
-        # camera params
+        # capture params
         self.cam_index = 0
         self.offline = False
         self.input_fps = 24
@@ -30,6 +32,11 @@ class getHRV:
         else:
             self.cap = cv2.VideoCapture(self.cam_index)
 
+        # initialize modules
+        self.filtering_module = Filtering()
+        self.rppg_module = RPPG()
+        self.vs_module = VitalSigns()
+
         # each [update_time] seconds, calculate a new hr value
         # each new hr value will be calculated based on info in previous [interval_time] seconds 
         self.update_time = 1
@@ -37,14 +44,16 @@ class getHRV:
         self.interval_time = self.interval_scale * self.update_time  
         self.start_time = time.time()
 
-        # lists used to stores history information and buffer information
-        self.ROI_values_all = []
-        self.ROI_values_buffer = []
+        # lists used to store all raw ppg signal (obtained from ROI) and corresponding times
+        self.raw_ppg_all = []
         self.raw_times_all = []
+
+        # lists used to store raw ppg signal in the current buffer (for analysing)
+        self.raw_ppg_buffer = []
         self.raw_times_buffer = []
 
         # lists used to update ppg buffer
-        self.update_index = [0]  # index in ROI_values_all
+        self.update_index = [0]  # index in raw_ppg_all
         self.update_count = 1
         self.buffer_start = 0  # buffer start time
         self.buffer_end = self.interval_scale  # buffer end time
@@ -126,7 +135,7 @@ class getHRV:
         bpmES = np.array(self.bpms).reshape(-1, 1)
         
         # perform outlier detection
-        od_module = OD()
+        od_module = OutlierDetection()
         adjusted_bpmES, mean_prediction, std_prediction, hyper_params = od_module.gaussian_od(timesES, bpmES)
 
         # plot bpm figure with outlier detection
@@ -173,15 +182,17 @@ class getHRV:
                 self.rPPG_image = self.cal_image
                 self.bpm_image = self.cal_image
 
+            # obtain raw signals in ROI
             raw = get_raw_signals(ROI_image_holistic, mask)
 
+            # get timestamp for current raw signal point
             if not self.offline:
                 current_time = time.time() - self.start_time
             else:
                 current_time = self.frame_count / self.input_fps
 
-            # TODO: ROI_values_all may save too much data
-            self.ROI_values_all.append(raw)
+            # raw_ppg shape: (len, 3), raw_times shape: (len,)
+            self.raw_ppg_all.append(raw)
             self.raw_times_all.append(current_time)
 
             if current_time >= self.update_count * self.update_time:
@@ -191,19 +202,33 @@ class getHRV:
                     # set current raw signal buffer
                     start_index = self.update_index[self.buffer_start]
                     end_index = self.update_index[self.buffer_end]
-                    self.ROI_values_buffer = np.array(self.ROI_values_all[start_index: end_index + 1])
+                    self.raw_ppg_buffer = np.array(self.raw_ppg_all[start_index: end_index + 1])
                     self.raw_times_buffer = np.array(self.raw_times_all[start_index: end_index + 1])
                     self.buffer_start += 1
                     self.buffer_end += 1
-                    buffer_size = len(self.ROI_values_buffer)
-                    # print("buffer {}~{}, size:{}".format(start_index, end_index, buffer_size))
+                    buffer_size = len(self.raw_ppg_buffer)
 
-                    # calculate bpm, rmssd and corresponding times
-                    rppg, rppg_ssf, peak_indices, ibi, bpm = process_raw_chrom(self.ROI_values_buffer, self.raw_times_buffer)
-                    rmssd = calculate_rmssd(ibi)
+                    # filter raw signals to get rPPG signal estimation
+                    # raw_ppg shape: (len, 3), times shape: (len,)
+                    # rppg shape: (len,)
+                    self.filtering_module.read_raw(self.raw_ppg_buffer, self.raw_times_buffer)
+                    rppg = self.filtering_module.raw2rppg()
+
+                    # read original rppg signal into vital sign module
+                    self.vs_module.read_rppg(rppg, self.filtering_module.fps)
+
+                    np.save('rppg.npy', rppg)
+
+                    # calculate vital signs
+                    rppg_ssf = self.vs_module.slop_sum_function()
+                    peak_indices = self.vs_module.find_peak_indices()
+                    ibi = self.vs_module.calculate_ibi()
+                    bpm = self.vs_module.calculate_HR()
+                    rmssd = self.vs_module.calculate_HRV()
+
                     if prior_bpm:
                         alpha = 0.6
-                        bpm = bpm*alpha + prior_bpm*(1-alpha) + 10  
+                        bpm = bpm*alpha + prior_bpm*(1-alpha) + 10
                     self.bpms.append(bpm)
                     self.rmssds.append(rmssd)
                     self.bpm_times.append(current_time)
@@ -217,7 +242,7 @@ class getHRV:
 
                 # print("info updated at time:{}".format(current_time))
                 self.update_count += 1
-                self.update_index.append(len(self.ROI_values_all) - 1)
+                self.update_index.append(len(self.raw_ppg_all) - 1)
 
         info_images = cv2.resize(cv2.hconcat([self.rPPG_image, self.bpm_image]), (self.width, int(self.height / 2)))
         display_image = cv2.vconcat([cam_images, info_images])
@@ -229,9 +254,9 @@ class getHRV:
 
 if __name__ == "__main__":
     if sys.argv[1] == 'offline':
-        hrv = getHRV(input_file='./videos/test_input.mov', output_file='./videos/out.avi')
+        hrv = RTrPPG(input_file='./videos/test_input.mov', output_file='./videos/test_out.avi')
     elif sys.argv[1] == 'online':
-        hrv = getHRV()
+        hrv = RTrPPG()
     else:
         print("wrong mode!")
         exit()
@@ -272,4 +297,4 @@ if __name__ == "__main__":
 
     # you can obtain the results you want in hrv object
     # print(hrv.bpms)
-    print(hrv.rmssds)
+    # print(hrv.rmssds)

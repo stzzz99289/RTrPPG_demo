@@ -3,9 +3,8 @@ from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel
 from sklearn import preprocessing
 from warnings import simplefilter, filterwarnings
 from sklearn.exceptions import ConvergenceWarning
-import numpy as np
 
-class OD:
+class OutlierDetection:
     def __init__(self):
         # filter some warnings in sklearn
         simplefilter("ignore", category=ConvergenceWarning)

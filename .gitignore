@@ -138,3 +138,6 @@ videos/*
 
 # idea files
 .idea/*
+
+# unused code stored in .txt
+*.txt

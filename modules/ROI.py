@@ -26,10 +26,10 @@ def get_raw_signals(ROI_image, mask):
     get raw signals (averaged over ROI), given ROI image and mask
     '''
     mask_single = mask[:, :, 0]
-    raw0 = np.sum(ROI_image[:, :, 0]) / (np.sum(mask_single) / 255)
-    raw1 = np.sum(ROI_image[:, :, 1]) / (np.sum(mask_single) / 255)
-    raw2 = np.sum(ROI_image[:, :, 2]) / (np.sum(mask_single) / 255)
-    raw = [raw0, raw1, raw2]
+    ROI_area = np.sum(mask_single) / 255
+    raw = []
+    for i in range(3):
+        raw.append(np.sum(ROI_image[:, :, i]) / ROI_area)
 
     return raw
 
