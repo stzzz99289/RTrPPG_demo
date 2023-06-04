@@ -69,13 +69,17 @@ class RTrPPG:
         self.calculating = False
         self.recording = False
 
-        # images displayed for online demo
+        # images displayed for demo
         self.init_image = putCentertext(np.zeros((int(self.height / 2), int(self.width / 2), 3), np.uint8),
                                         "Press s to start.")
         self.cal_image = putCentertext(np.zeros((int(self.height / 2), int(self.width / 2), 3), np.uint8),
                                        "Calculating...")
         self.rPPG_image = self.init_image
         self.bpm_image = self.init_image
+
+        # 'debug' mode: display user images, rPPG signals and vital signs historys
+        # 'demo' mode: only display user images with current vital sign values
+        self.display_mode = "demo"
 
         # turn on outlier detection or not
         self.od = True
@@ -217,6 +221,7 @@ class RTrPPG:
                     # read original rppg signal into vital sign module
                     self.vs_module.read_rppg(rppg, self.filtering_module.fps)
 
+                    # save rppg data of last frame for development
                     np.save('rppg.npy', rppg)
 
                     # calculate vital signs
@@ -234,18 +239,26 @@ class RTrPPG:
                     self.bpm_times.append(current_time)
 
                     # set rPPG signal image and history HR image
-                    self.set_rPPG_image(buffer_size, rppg, rppg_ssf, peak_indices, ibi, current_time)
-                    if self.od == False:
-                        self.set_hr_image(bpm, rmssd)
-                    else:
-                        self.set_hr_image_od(bpm, rmssd)
+                    if self.display_mode == "debug":
+                        self.set_rPPG_image(buffer_size, rppg, rppg_ssf, peak_indices, ibi, current_time)
+                        if self.od == False:
+                            self.set_hr_image(bpm, rmssd)
+                        else:
+                            self.set_hr_image_od(bpm, rmssd)
 
                 # print("info updated at time:{}".format(current_time))
                 self.update_count += 1
                 self.update_index.append(len(self.raw_ppg_all) - 1)
 
-        info_images = cv2.resize(cv2.hconcat([self.rPPG_image, self.bpm_image]), (self.width, int(self.height / 2)))
-        display_image = cv2.vconcat([cam_images, info_images])
+        if self.display_mode == "debug":
+            info_images = cv2.resize(cv2.hconcat([self.rPPG_image, self.bpm_image]), (self.width, int(self.height / 2)))
+            display_image = cv2.vconcat([cam_images, info_images])
+        elif self.display_mode == "demo":
+            if self.recording:
+                display_image = putBottomtext(ROI_image_display, "current HR: {}".format(int(self.bpms[-1])))
+            else:
+                display_image = ROI_image_display
+            display_image = cv2.resize(display_image, (self.width, self.height))
 
         self.out.write(display_image)
         if not self.offline:

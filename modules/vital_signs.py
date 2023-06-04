@@ -45,7 +45,7 @@ class VitalSigns:
         maxHz = self.maxHR / 60.0
         band = np.argwhere((F > minHz) & (F < maxHz)).flatten()
         Pfreqs = 60*F[band]
-        Power = P[:, band]
+        Power = P[band]
 
         return Pfreqs, Power
 
@@ -127,8 +127,8 @@ class VitalSigns:
         elif hr_metric == "spec":
             # hr calculation based on freqency spectrom
             Pfreqs, Power = self.calculate_freq_spec()
-            Pmax = np.argmax(Power, axis=1)
-            bpm = Pfreqs[Pmax.squeeze()]
+            Pmax = np.argmax(Power)
+            bpm = Pfreqs[Pmax]
             return bpm
         
         else:
@@ -144,7 +144,11 @@ class VitalSigns:
         if hrv_metric == "rmssd":
             ms_ibi = self.calculate_ibi()
             ibi_diff = np.diff(ms_ibi)
-            return np.sqrt(np.sum(ibi_diff ** 2) / len(ibi_diff))
+
+            if len(ibi_diff) == 0:
+                return 0
+            else:
+                return np.sqrt(np.sum(ibi_diff ** 2) / len(ibi_diff))
 
         else:
             return None
