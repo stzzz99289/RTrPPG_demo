@@ -4,23 +4,38 @@ demo code for RTrPPG, by Tianze Shi, School of Computer Science, PKU.
 
 ## dependencies
 
-- see file `environment.yml`
+- opencv
+- mediapipe
+- matplotlib
+- numpy
+- scipy
 
 ## run
 
-- online mode (requires a webcam)
+`> python main.py [run_mode] [display_mode]`
 
-    - `> python main.py online`
+### run mode
 
-- offline mode (takes a pre-recorded video as input)
+- `online`
 
-    - `> python main.py offline`
+    - requires a webcam
 
-- results are not stable in the wild, for a more stable result, you can set `prior_hr`
+- `offline`
 
-    - `> python main.py offline 70`
-    - in this example, `prior_hr` is set to 70 (which is the user's average hr) and we can get a more stable hr prediction result.
-    - you can set `prior_hr` based on user's preference.
+    - takes a pre-recorded video as input
+
+### display mode
+
+- `debug` (show more information in four images)
+
+    - first image: original input video frames
+    - second image: input video frames with ROI region visualization
+    - third image: rPPG signals in the current time window
+    - fourth image: vital signs history
+
+- `demo` (show basic information in one image)
+
+    - original input video frames with vital signs information
 
 ## todo list
 

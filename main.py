@@ -2,6 +2,7 @@ import cv2
 import time
 import sys
 import numpy as np
+import pprint
 import matplotlib.pyplot as plt
 
 from modules.ROI import get_ROI, get_raw_signals
@@ -16,6 +17,8 @@ class RTrPPG:
 
     def __init__(self, input_file=None, output_file='out.avi'):
         # capture params
+        self.input_file = input_file
+        self.output_file = output_file
         self.cam_index = 0
         self.offline = False
         self.input_fps = 24
@@ -31,6 +34,7 @@ class RTrPPG:
             self.offline = True
         else:
             self.cap = cv2.VideoCapture(self.cam_index)
+            self.input_fps = self.cap.get(cv2.CAP_PROP_FPS)
 
         # initialize modules
         self.filtering_module = Filtering()
@@ -84,10 +88,39 @@ class RTrPPG:
         # turn on outlier detection or not
         self.od = True
 
+        # prior bpm
+        self.prior_bpm = None
+
         # params for output to video file
         self.frame_count = 0
         self.out = cv2.VideoWriter(output_file, cv2.VideoWriter_fourcc(*'MJPG'), self.input_fps, (self.width,self.height))
     
+    def get_params(self):
+        params_dict_general = {
+            "online": not self.offline,
+            "display mode": self.display_mode,
+            "output resolution": (self.width, self.height),
+            "vital signs update time": self.update_time,
+            "rPPG time window length": self.interval_time,
+            "using outlier detection module": self.od,
+            "prior bpm value": self.prior_bpm
+        }
+
+        if self.offline:
+            params_dict_mode = {
+                "input file name": self.input_file,
+                "output file name": self.output_file,
+                "input video fps": self.input_fps,
+            }
+        else:
+            params_dict_mode = {
+                "camera index": self.cam_index,
+                "output file name": self.output_file,
+                "input stream fps": self.input_fps,
+            }
+
+        return {**params_dict_mode, **params_dict_general}
+
     def set_rPPG_image_debug(self, buffer_size, rppgs, bpms, kurt, target_index, current_time):
         rPPG_fig, (ax1, ax2, ax3) = plt.subplots(nrows=3, sharex=True)
         even_times = np.linspace(self.buffer_start, self.buffer_end, buffer_size)
@@ -159,12 +192,12 @@ class RTrPPG:
         plt.ylabel("HR series")
         plt.ylim([50, 120])
         _ = plt.title(r"$l={:.2f}, \sigma_f={:.2f}, \sigma_n={:.2f}$".format(*hyper_params))
-        self.adjusted_bpms = adjusted_bpmES
+        self.adjusted_bpms.append(adjusted_bpmES)
         self.bpm_image = plt2cv(bpm_fig, (int(self.width/2), int(self.height/2)))
         self.bpm_image = putBottomtext(self.bpm_image, "HR: {}, HRV: {}ms"
                                         .format(int(bpm), int(rmssd)))
 
-    def main_loop(self, prior_bpm):
+    def main_loop(self):
         # read image from cap
         self.success, image = self.cap.read()
         if not self.success:
@@ -231,9 +264,9 @@ class RTrPPG:
                     bpm = self.vs_module.calculate_HR(hr_metric='spec')
                     rmssd = self.vs_module.calculate_HRV(hrv_metric='rmssd')
 
-                    if prior_bpm:
+                    if self.prior_bpm:
                         alpha = 0.6
-                        bpm = bpm*alpha + prior_bpm*(1-alpha) + 10
+                        bpm = bpm * alpha + self.prior_bpm * (1-alpha) + 10
                     self.bpms.append(bpm)
                     self.rmssds.append(rmssd)
                     self.bpm_times.append(current_time)
@@ -266,12 +299,13 @@ class RTrPPG:
 
 
 if __name__ == "__main__":
+    # first argument
     if sys.argv[1] == 'offline':
         hrv = RTrPPG(input_file='./videos/test_input.mov', output_file='./videos/test_out.avi')
     elif sys.argv[1] == 'online':
         hrv = RTrPPG()
     else:
-        print("wrong mode!")
+        print("wrong running mode!")
         exit()
 
     # if online, create window for display
@@ -283,15 +317,24 @@ if __name__ == "__main__":
         hrv.calculating = True
         hrv.start_time = time.time()
 
-    # hr prior for demo
+    # second argument
     if len(sys.argv) > 2:
-        prior_hr = int(sys.argv[2])
-    else:
-        prior_hr = None
+        if sys.argv[2].isnumeric():
+            # second argument specify prior hr value
+            hrv.prior_bpm = int(sys.argv[2])
+        else:
+            # second argument specify display mode
+            hrv.display_mode = sys.argv[2]
+
+    # running information summary
+    print("----------")
+    print("RTrPPG(Real-Time rPPG) application summary: ")
+    pprint.pprint(hrv.get_params())
+    print("----------")
 
     # hrv.start_time = time.time()
     while hrv.cap.isOpened():
-        hrv.main_loop(prior_hr)
+        hrv.main_loop()
         key = cv2.waitKey(10) & 0xFF
 
         if hrv.offline:
