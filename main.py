@@ -3,6 +3,7 @@ import time
 import sys
 import numpy as np
 import pprint
+import optparse
 import matplotlib.pyplot as plt
 
 from modules.ROI import get_ROI, get_raw_signals
@@ -15,7 +16,7 @@ from modules.vital_signs import VitalSigns
 
 class RTrPPG:
 
-    def __init__(self, input_file=None, output_file='out.avi'):
+    def __init__(self, input_file, output_file):
         # capture params
         self.input_file = input_file
         self.output_file = output_file
@@ -93,6 +94,8 @@ class RTrPPG:
 
         # params for output to video file
         self.frame_count = 0
+        if output_file is None:
+            output_file = "out.avi"
         self.out = cv2.VideoWriter(output_file, cv2.VideoWriter_fourcc(*'MJPG'), self.input_fps, (self.width,self.height))
     
     def get_params(self):
@@ -299,14 +302,39 @@ class RTrPPG:
 
 
 if __name__ == "__main__":
-    # first argument
-    if sys.argv[1] == 'offline':
-        hrv = RTrPPG(input_file='./videos/test_input.mov', output_file='./videos/test_out.avi')
-    elif sys.argv[1] == 'online':
-        hrv = RTrPPG()
+    # parse all options
+    opt_parser = optparse.OptionParser()
+    opt_parser.add_option("-m", "--mode",
+                          dest = "mode",
+                          help = "running mode (online/offline)")
+    opt_parser.add_option("-d", "--display",
+                          dest = "display",
+                          help = "display basic information or full information (demo/debug)")
+    opt_parser.add_option("-i", "--input",
+                          dest = "infile",
+                          help = "input video file path")
+    opt_parser.add_option("-o", "--output",
+                          dest = "outfile",
+                          help = "output video file path")
+    (opts, args) = opt_parser.parse_args()
+
+    # running mode
+    if opts.mode == "offline":
+        hrv = RTrPPG(input_file=opts.infile, output_file=opts.outfile)
+    elif opts.mode == "online":
+        hrv = RTrPPG(input_file=None, output_file=opts.outfile)
     else:
         print("wrong running mode!")
         exit()
+
+    # # first argument
+    # if sys.argv[1] == 'offline':
+    #     hrv = RTrPPG(input_file='./videos/test_input.mov', output_file='./videos/test_out.avi')
+    # elif sys.argv[1] == 'online':
+    #     hrv = RTrPPG()
+    # else:
+    #     print("wrong running mode!")
+    #     exit()
 
     # if online, create window for display
     if not hrv.offline:
