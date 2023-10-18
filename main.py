@@ -87,7 +87,7 @@ class RTrPPG:
         self.display_mode = "demo"
 
         # turn on outlier detection or not
-        self.od = True
+        self.od = False
 
         # prior bpm
         self.prior_bpm = None
@@ -289,12 +289,15 @@ class RTrPPG:
         if self.display_mode == "debug":
             info_images = cv2.resize(cv2.hconcat([self.rPPG_image, self.bpm_image]), (self.width, int(self.height / 2)))
             display_image = cv2.vconcat([cam_images, info_images])
+
         elif self.display_mode == "demo":
             if self.recording:
                 display_image = putBottomtext(ROI_image_display, "current HR: {}".format(int(self.bpms[-1])))
             else:
-                display_image = ROI_image_display
+                display_image = putBottomtext(ROI_image_display, "calculating...")
             display_image = cv2.resize(display_image, (self.width, self.height))
+        else:
+            print("[error] wrong display mode!")
 
         self.out.write(display_image)
         if not self.offline:
@@ -326,15 +329,10 @@ if __name__ == "__main__":
     else:
         print("wrong running mode!")
         exit()
-
-    # # first argument
-    # if sys.argv[1] == 'offline':
-    #     hrv = RTrPPG(input_file='./videos/test_input.mov', output_file='./videos/test_out.avi')
-    # elif sys.argv[1] == 'online':
-    #     hrv = RTrPPG()
-    # else:
-    #     print("wrong running mode!")
-    #     exit()
+    
+    # set config params
+    if opts.display:
+        hrv.display_mode = opts.display
 
     # if online, create window for display
     if not hrv.offline:
@@ -344,15 +342,6 @@ if __name__ == "__main__":
     else:
         hrv.calculating = True
         hrv.start_time = time.time()
-
-    # second argument
-    if len(sys.argv) > 2:
-        if sys.argv[2].isnumeric():
-            # second argument specify prior hr value
-            hrv.prior_bpm = int(sys.argv[2])
-        else:
-            # second argument specify display mode
-            hrv.display_mode = sys.argv[2]
 
     # running information summary
     print("----------")
